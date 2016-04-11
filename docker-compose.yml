@@ -1,0 +1,16 @@
+version: '2'
+services:
+  server:
+    build: .
+    ports:
+      - 3000
+      - 9998
+    volumes:
+      - .:/code:ro
+  test:
+    build: .
+    command: perl test_gossip.pl
+    volumes:
+      - .:/code:ro
+    depends_on:
+      - server
