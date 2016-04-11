@@ -41,6 +41,13 @@ sub add_to_news {
 sub register {
 	my $self	= shift;
 	my $app		= shift;
+	my $conf	= shift;
+
+	if(defined $conf and ref $conf eq "HASH") {
+		if (exists $conf->{peers}) {
+			$self->peers($conf->{peers});
+		}
+	}
 
 	$self->reactor->io($self->udp_sock => sub{
 		my $reactor	= shift;
