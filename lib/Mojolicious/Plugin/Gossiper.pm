@@ -2,7 +2,7 @@ package Mojolicious::Plugin::Gossiper;
 use Mojo::Base 'Mojolicious::Plugin';
 use Mojo::IOLoop;
 use IO::Socket::INET;
-use Mojo::JSON;
+use Mojo::JSON qw/to_json from_json/;
 
 our $VERSION = '0.01';
 
@@ -28,14 +28,19 @@ sub is_new {
 	1
 }
 
-sub add_to_news {
-	my $self	= shift;
-	my $data	= shift;
+sub has_news {1}
 
-	for my $new (@{ ref $data eq "ARRAY" ? $data : [$data] }) {
-		push @{ $self->news }, { %$new, counter => 0 }
+sub send_news {
+	my $self	= shift;
+	my $peer	= shift;
+	if($self->has_news) {
+		my $socket = new IO::Socket::INET (
+			PeerAddr	=> $peer,
+			Proto		=> "udp"
+		) or die "ERROR in Socket Creation : $!\n";
+
+		$socket->send(to_json($self->news))
 	}
-	$self->app->plugins->emit_hook(patch_gossip_data => $data)
 }
 
 sub register {
@@ -43,9 +48,20 @@ sub register {
 	my $app		= shift;
 	my $conf	= shift;
 
+	$app->helper(add_to_gossip_news => sub{
+		my $c		= shift;
+		my $data	= shift;
+
+		for my $new (@{ ref $data eq "ARRAY" ? $data : [$data] }) {
+			push @{ $self->news }, { %$new, counter => 0 }
+		}
+		$app->plugins->emit_hook(updated_gossip_data => $data)
+	});
+
 	if(defined $conf and ref $conf eq "HASH") {
 		if (exists $conf->{peers}) {
 			$self->peers($conf->{peers});
+			$app->add_to_gossip_news({add => $self->peers});
 		}
 	}
 
@@ -57,7 +73,6 @@ sub register {
 
 		my $data;
 		while($self->udp_sock->recv(my $tmp, 1024)) {
-			$app->log->debug("looping... tmp: $tmp");
 			$data .= $tmp;
 		}
 
@@ -66,24 +81,23 @@ sub register {
 		};
 		return if $@;
 
+		$app->log->debug("received: ", $app->dumper($data));
+
 		if(defined $data) {
 			$app->log->debug("DATA: $data");
 			if($self->is_new($data)) {
-				$self->add_to_news($data)
+				$app->add_to_gossip_news($data)
 			}
-			$app->plugins->emit_hook(patch_gossip_data => $data)
+			$app->plugins->emit_hook(gossip_data_patch => $data)
 		}
 	})->watch($self->udp_sock, 1, 0);
 
 	$self->reactor->recurring($self->interval_time => sub {
 		if(@{ $self->peers }) {
+			#$app->log->debug("has peers");
 			my $peer = $self->peers->[rand @{ $self->peers }];
-			my $socket = new IO::Socket::INET (
-				PeerAddr	=> $peer,
-				Proto		=> "udp"
-			) or die "ERROR in Socket Creation : $!\n";
-
-			$socket->send("test")
+			#$app->log->debug("choose: $peer");
+			$self->send_news($peer)
 		}
 	});
 }

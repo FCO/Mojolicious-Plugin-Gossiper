@@ -1,16 +1,43 @@
 version: '2'
 services:
-  server:
+  node1:
     build: .
     ports:
       - 3000
       - 9998
     volumes:
       - .:/code:ro
-  test:
+    environment:
+      GOSSIPER_PEERS: node2:9998,node3:9998
+  node2:
     build: .
-    command: perl test_gossip.pl
+    ports:
+      - 3000
+      - 9998
     volumes:
       - .:/code:ro
-    depends_on:
-      - server
+    environment:
+      GOSSIPER_PEERS: node1:9998,node3:9998
+  node3:
+    build: .
+    ports:
+      - 3000
+      - 9998
+    volumes:
+      - .:/code:ro
+    environment:
+      GOSSIPER_PEERS: node1:9998,node2:9998
+  #server:
+  #  build: .
+  #  ports:
+  #    - 3000
+  #    - 9998
+  #  volumes:
+  #    - .:/code:ro
+  #test:
+  #  build: .
+  #  command: perl test_gossip.pl
+  #  volumes:
+  #    - .:/code:ro
+  #  depends_on:
+  #    - server

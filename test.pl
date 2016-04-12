@@ -4,7 +4,7 @@ use Mojolicious::Lite;
 use lib "lib";
 plugin "Gossiper" => {peers => [ split /\s*,\s*/, $ENV{GOSSIPER_PEERS} ]};
 
-app->hook(patch_gossip_data => sub {
+app->hook(gossip_data_patch => sub {
 	app->log->debug("got data => @_");
 });
 
