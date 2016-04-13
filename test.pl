@@ -2,10 +2,15 @@
 use Mojolicious::Lite;
 
 use lib "lib";
-plugin "Gossiper" => {peers => [ split /\s*,\s*/, $ENV{GOSSIPER_PEERS} ]};
+plugin "Gossiper" => {nodes => [ split /\s*,\s*/, $ENV{GOSSIPER_PEERS} ]};
 
 app->hook(gossip_data_patch => sub {
-	app->log->debug("got data => @_");
+	#app->log->debug("got data => @_");
+});
+
+app->hook(updated_gossip_data => sub {
+	my $nodes = shift;
+	app->log->debug("nodes => @$nodes");
 });
 
 app->start

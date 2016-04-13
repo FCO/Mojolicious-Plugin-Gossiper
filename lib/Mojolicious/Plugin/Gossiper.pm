@@ -3,11 +3,14 @@ use Mojo::Base 'Mojolicious::Plugin';
 use Mojo::IOLoop;
 use IO::Socket::INET;
 use Mojo::JSON qw/to_json from_json/;
+use Time::HiRes qw/time/;
+use Mojo::Util qw/sha1_sum/;
 
 our $VERSION = '0.01';
 
 has news		=> sub {[]};
-has peers		=> sub {[]};
+has news_cache		=> sub {{}};
+has nodes		=> sub {[]};
 has listen_port		=> 9998;
 has interval_time	=> .1;
 has loop		=> sub {Mojo::IOLoop->singleton};
@@ -28,7 +31,15 @@ sub is_new {
 	1
 }
 
-sub has_news {1}
+sub has_news {
+	my $self = shift;
+	for my $index(0 .. $#{ $self->news }) {
+		my $new = $self->news->[$index];
+		$new->{counter}++;
+		 splice @{ $self->news }, $index, 1 if $new->{counter} >= @{ $self->nodes } * 2;
+	}
+	+@{ $self->news }
+}
 
 sub send_news {
 	my $self	= shift;
@@ -39,7 +50,7 @@ sub send_news {
 			Proto		=> "udp"
 		) or die "ERROR in Socket Creation : $!\n";
 
-		$socket->send(to_json($self->news))
+		$socket->send(to_json([ map {{obj => $_->{obj}, sha => $_->{sha}}} @{ $self->news } ]));
 	}
 }
 
@@ -48,20 +59,54 @@ sub register {
 	my $app		= shift;
 	my $conf	= shift;
 
+	$app->helper(gossip_node => sub{
+		state $node ||= sprintf "%s:%d", $self->udp_sock->sockhost, $self->udp_sock->sockport
+	});
+
 	$app->helper(add_to_gossip_news => sub{
 		my $c		= shift;
 		my $data	= shift;
 
-		for my $new (@{ ref $data eq "ARRAY" ? $data : [$data] }) {
-			push @{ $self->news }, { %$new, counter => 0 }
+		my @patch;
+		for my $obj (@{ ref $data eq "ARRAY" ? $data : [$data] }) {
+			my $new = {};
+			if(ref $obj eq "HASH" and exists $obj->{obj}) {
+				$new = $obj;
+				$obj = $new->{obj}
+			} else {
+				$new->{obj} = $obj
+			}
+			$new->{added}	= time;
+			$new->{counter}	= 0;
+			if(not exists $new->{sha}) {
+				$new->{sha} = sha1_sum(to_json($new))
+			} else {
+				next if exists $self->news_cache->{$new->{sha}}
+			}
+			push @patch, $obj;
+			$self->news_cache->{$new->{sha}} = $new;
+			push @{ $self->news }, $new
 		}
-		$app->plugins->emit_hook(updated_gossip_data => $data)
+		my %nodes = map {($_ => 1)} @{ $self->nodes };
+		for my $patch(@patch) {
+			for my $cmd(keys $patch) {
+				if($cmd eq "add") {
+					$nodes{$_}++ for @{ $patch->{$cmd} };
+				} elsif($cmd eq "del") {
+					delete $nodes{$_} for @{ $patch->{$cmd} };
+				}
+			}
+		}
+		$self->nodes([ keys %nodes ]);
+		$app->plugins->emit_hook(updated_gossip_data => $self->nodes)
 	});
 
+	#$app->add_to_gossip_news({add => [$app->gossip_node]});
+
 	if(defined $conf and ref $conf eq "HASH") {
-		if (exists $conf->{peers}) {
-			$self->peers($conf->{peers});
-			$app->add_to_gossip_news({add => $self->peers});
+		if (exists $conf->{nodes}) {
+			$self->nodes($conf->{nodes});
+			$app->add_to_gossip_news({add => $self->nodes});
 		}
 	}
 
@@ -93,9 +138,9 @@ sub register {
 	})->watch($self->udp_sock, 1, 0);
 
 	$self->reactor->recurring($self->interval_time => sub {
-		if(@{ $self->peers }) {
-			#$app->log->debug("has peers");
-			my $peer = $self->peers->[rand @{ $self->peers }];
+		if(@{ $self->nodes }) {
+			#$app->log->debug("has nodes");
+			my $peer = $self->nodes->[rand @{ $self->nodes }];
 			#$app->log->debug("choose: $peer");
 			$self->send_news($peer)
 		}
