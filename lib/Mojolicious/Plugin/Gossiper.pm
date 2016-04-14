@@ -10,7 +10,7 @@ our $VERSION = '0.01';
 
 has news		=> sub {[]};
 has news_cache		=> sub {{}};
-has nodes		=> sub {[]};
+has nodes		=> sub {{}};
 has listen_port		=> 9998;
 has interval_time	=> .1;
 has loop		=> sub {Mojo::IOLoop->singleton};
@@ -24,6 +24,20 @@ has udp_sock		=> sub {
 	) or die "Cant bind : $@\n";
 };
 
+sub get_local_ip_address {
+	my $node = shift;
+	my $socket = IO::Socket::INET->new(
+		Proto       => 'udp',
+		PeerAddr    => $node,
+	);
+
+	# A side-effect of making a socket connection is that our IP address
+	# is available from the 'sockhost' method
+	my $local_ip_address = $socket->sockhost;
+
+	return $local_ip_address;
+}
+
 sub is_new {
 	my $self	= shift;
 	my $news	= shift;
@@ -36,7 +50,7 @@ sub has_news {
 	for my $index(0 .. $#{ $self->news }) {
 		my $new = $self->news->[$index];
 		$new->{counter}++;
-		 splice @{ $self->news }, $index, 1 if $new->{counter} >= @{ $self->nodes } * 2;
+		 splice @{ $self->news }, $index, 1 if $new->{counter} >= keys(%{ $self->nodes }) * 2;
 	}
 	+@{ $self->news }
 }
@@ -59,8 +73,8 @@ sub register {
 	my $app		= shift;
 	my $conf	= shift;
 
-	$app->helper(gossip_node => sub{
-		state $node ||= sprintf "%s:%d", $self->udp_sock->sockhost, $self->udp_sock->sockport
+	$app->helper(gossip_nodes => sub{
+		keys %{ $self->nodes }
 	});
 
 	$app->helper(add_to_gossip_news => sub{
@@ -87,17 +101,18 @@ sub register {
 			$self->news_cache->{$new->{sha}} = $new;
 			push @{ $self->news }, $new
 		}
-		my %nodes = map {($_ => 1)} @{ $self->nodes };
+		my %nodes = %{ $self->nodes };
 		for my $patch(@patch) {
-			for my $cmd(keys $patch) {
+			for my $cmd(keys %$patch) {
+				#$app->log->debug($app->dumper($patch));
 				if($cmd eq "add") {
-					$nodes{$_}++ for @{ $patch->{$cmd} };
+					$nodes{$_} = 1 for @{ $patch->{$cmd} };
 				} elsif($cmd eq "del") {
 					delete $nodes{$_} for @{ $patch->{$cmd} };
 				}
 			}
 		}
-		$self->nodes([ keys %nodes ]);
+		$self->nodes(\%nodes);
 		$app->plugins->emit_hook(updated_gossip_data => $self->nodes)
 	});
 
@@ -105,20 +120,23 @@ sub register {
 
 	if(defined $conf and ref $conf eq "HASH") {
 		if (exists $conf->{nodes}) {
-			$self->nodes($conf->{nodes});
-			$app->add_to_gossip_news({add => $self->nodes});
+			$self->nodes({ map {($_ => 1)} @{ ref $conf->{nodes} eq "ARRAY" ? $conf->{nodes} : [$conf->{nodes}] }});
+			$app->add_to_gossip_news({add => [keys %{ $self->nodes }]});
 		}
+		$app->add_to_gossip_news({add => [get_local_ip_address((keys %{ $self->nodes })[0]) . ":9998"]}) if keys %{ $self->nodes };
 	}
 
 	$self->reactor->io($self->udp_sock => sub{
 		my $reactor	= shift;
 		my $writable	= shift;
 
-		$app->log->debug("reactor call... writable: $writable");
+		#$app->log->debug("reactor call... writable: $writable");
 
 		my $data;
-		while($self->udp_sock->recv(my $tmp, 1024)) {
+		my $client;
+		while(my $tmp_client = $self->udp_sock->recv(my $tmp, 1024)) {
 			$data .= $tmp;
+			$client = $tmp_client;
 		}
 
 		eval {
@@ -126,10 +144,7 @@ sub register {
 		};
 		return if $@;
 
-		$app->log->debug("received: ", $app->dumper($data));
-
 		if(defined $data) {
-			$app->log->debug("DATA: $data");
 			if($self->is_new($data)) {
 				$app->add_to_gossip_news($data)
 			}
@@ -138,10 +153,9 @@ sub register {
 	})->watch($self->udp_sock, 1, 0);
 
 	$self->reactor->recurring($self->interval_time => sub {
-		if(@{ $self->nodes }) {
+		if(my @nodes = keys %{ $self->nodes }) {
 			#$app->log->debug("has nodes");
-			my $peer = $self->nodes->[rand @{ $self->nodes }];
-			#$app->log->debug("choose: $peer");
+			my $peer = $nodes[rand @nodes];
 			$self->send_news($peer)
 		}
 	});

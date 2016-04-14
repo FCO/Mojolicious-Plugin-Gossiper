@@ -7,8 +7,6 @@ services:
       - 9998
     volumes:
       - .:/code:ro
-    environment:
-      GOSSIPER_PEERS: node2:9998,node3:9998
   node2:
     build: .
     ports:
@@ -17,7 +15,7 @@ services:
     volumes:
       - .:/code:ro
     environment:
-      GOSSIPER_PEERS: node1:9998,node3:9998
+      GOSSIPER_PEERS: node1:9998
   node3:
     build: .
     ports:
