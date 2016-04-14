@@ -25,6 +25,24 @@ services:
       - .:/code:ro
     environment:
       GOSSIPER_PEERS: node1:9998,node2:9998
+  node4:
+    build: .
+    ports:
+      - 3000
+      - 9998
+    volumes:
+      - .:/code:ro
+    environment:
+      GOSSIPER_PEERS: node2:9998
+  node5:
+    build: .
+    ports:
+      - 3000
+      - 9998
+    volumes:
+      - .:/code:ro
+    environment:
+      GOSSIPER_PEERS: node4:9998
   #server:
   #  build: .
   #  ports:

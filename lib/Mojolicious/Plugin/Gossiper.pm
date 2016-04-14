@@ -50,7 +50,7 @@ sub has_news {
 	for my $index(0 .. $#{ $self->news }) {
 		my $new = $self->news->[$index];
 		$new->{counter}++;
-		 splice @{ $self->news }, $index, 1 if $new->{counter} >= keys(%{ $self->nodes }) * 2;
+		 splice @{ $self->news }, $index, 1 if $new->{counter} >= keys(%{ $self->nodes }) * 10;
 	}
 	+@{ $self->news }
 }
